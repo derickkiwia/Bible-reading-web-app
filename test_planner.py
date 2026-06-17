@@ -7,12 +7,7 @@ Run with:
 from datetime import date
 
 from bible_data import TOTAL_BIBLE_CHAPTERS, get_all_chapters
-from planner import (
-    choose_completed_chapters,
-    generate_initial_plan,
-    get_unread_chapters,
-    recalculate_future_plan,
-)
+from planner import generate_initial_plan, recalculate_future_plan
 
 
 def flatten(assignments):
@@ -44,6 +39,26 @@ def test_plan_covers_all_chapters_once():
     assert assigned == plan_chapters
 
 
+def test_mixed_plan_covers_old_and_new_testaments_once():
+    settings = {
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "selected_weekdays": [0, 1, 2, 3, 4, 5, 6],
+        "plan_style": "Mixed Old and New Testament",
+        "old_testament_percent": 70,
+        "old_start_book": "Genesis",
+        "old_start_chapter": 1,
+        "new_start_book": "Matthew",
+        "new_start_chapter": 1,
+    }
+    assignments, plan_chapters = generate_initial_plan(settings)
+    assigned = flatten(assignments)
+
+    assert len(plan_chapters) == 1189
+    assert len(assigned) == 1189
+    assert len(set(assigned)) == 1189
+
+
 def test_completed_chapters_are_not_reassigned():
     settings = {
         "start_date": "2026-01-01",
@@ -71,44 +86,36 @@ def test_missed_chapters_are_redistributed():
         "start_chapter": 1,
     }
     plan_chapters = get_all_chapters("Genesis", 1)
-    completed = []
-    future = recalculate_future_plan(settings, plan_chapters, completed, date(2026, 1, 2))
+    future = recalculate_future_plan(settings, plan_chapters, [], date(2026, 1, 2))
     assigned = flatten(future)
 
     assert "Genesis 1" in assigned
     assert len(assigned) == 1189
 
 
-def test_extra_reading_moves_plan_forward():
+def test_future_assignments_update_after_progress():
+    settings = {
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-10",
+        "selected_weekdays": [0, 1, 2, 3, 4, 5, 6],
+        "start_book": "Genesis",
+        "start_chapter": 1,
+    }
     plan_chapters = get_all_chapters("Genesis", 1)
-    assigned_today = ["Genesis 1", "Genesis 2", "Genesis 3", "Genesis 4"]
-    completed = choose_completed_chapters(assigned_today, plan_chapters, [], 6)
+    completed = ["Genesis 1", "Genesis 2"]
+    future = recalculate_future_plan(settings, plan_chapters, completed, date(2026, 1, 2))
+    assigned = flatten(future)
 
-    assert completed == [
-        "Genesis 1",
-        "Genesis 2",
-        "Genesis 3",
-        "Genesis 4",
-        "Genesis 5",
-        "Genesis 6",
-    ]
-
-
-def test_unread_chapters_after_partial_progress():
-    plan_chapters = get_all_chapters("Genesis", 1)
-    assigned_today = ["Genesis 1", "Genesis 2", "Genesis 3", "Genesis 4"]
-    completed = choose_completed_chapters(assigned_today, plan_chapters, [], 2)
-    unread = get_unread_chapters(plan_chapters, completed)
-
-    assert completed == ["Genesis 1", "Genesis 2"]
-    assert unread[0] == "Genesis 3"
+    assert assigned[0] == "Genesis 3"
+    assert "Genesis 1" not in assigned
+    assert "Genesis 2" not in assigned
 
 
 if __name__ == "__main__":
     test_total_chapters()
     test_plan_covers_all_chapters_once()
+    test_mixed_plan_covers_old_and_new_testaments_once()
     test_completed_chapters_are_not_reassigned()
     test_missed_chapters_are_redistributed()
-    test_extra_reading_moves_plan_forward()
-    test_unread_chapters_after_partial_progress()
+    test_future_assignments_update_after_progress()
     print("All planner tests passed.")

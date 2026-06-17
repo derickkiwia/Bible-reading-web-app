@@ -1,31 +1,37 @@
 # Bible Reading Planner
 
-A beginner-friendly Bible reading planner built with Python and Streamlit. It helps you create a daily chapter plan, record what you actually read, and automatically adjust future assignments so you can still finish by your chosen end date.
+A beginner-friendly Bible reading planner built with Python and Streamlit. It helps users create a Bible reading plan, record daily progress, adjust future assignments automatically, and share progress with groups or invited viewers.
 
 The app uses the standard Protestant Bible chapter count: 66 books and 1,189 total chapters.
 
 ## Features
 
-- Create a reading plan from Genesis 1 or any selected book and chapter.
-- Choose a start date, end date, and reading days of the week.
-- See today's assigned chapters.
-- Mark today's assigned reading complete.
-- Enter a different number of chapters if you read more, less, or skipped.
+- Local sign up and login with name, username, and PIN.
+- New users are sent to plan setup.
+- Returning users with a plan are sent straight to progress tracking.
+- Create a plan from Genesis, from a selected book/chapter, or as a mixed Old Testament/New Testament plan.
+- Choose an Old Testament percentage for mixed plans.
+- Select exact chapters read using chapter pickers instead of typing.
+- Record progress for today or a previous date.
+- Add extra progress by selecting Old Testament or New Testament, then book and chapters.
 - Automatically redistribute unread chapters across future reading days.
-- Track completed chapters, remaining chapters, percentage complete, streaks, missed days, and estimated completion date.
-- Save notes or reflections for each day.
-- Export reading history and the full plan to CSV.
-- Reset the plan with confirmation.
-- Includes a placeholder function for future AI reflection prompts without calling any external API.
+- Track whole Bible, Old Testament, and New Testament progress.
+- See projected finish timing based on current pace.
+- Join groups and allow other usernames to view your progress.
+- View a leaderboard ranked by Bible completion percentage.
+- Add notes or reflections for each progress update.
+- Export full reading history and plan to CSV.
+- Export and restore user backup data as JSON.
+- Includes a placeholder function for future AI reflection prompts without using an external API.
 
 ## Project Files
 
 - `app.py` - the main Streamlit web app.
-- `bible_data.py` - the Bible book list and chapter counts.
-- `planner.py` - plan generation, progress, and recalculation logic.
-- `storage.py` - SQLite saving and loading functions.
+- `bible_data.py` - Bible book names, chapter counts, and Testament helpers.
+- `planner.py` - plan generation, mixed-plan distribution, progress status, and recalculation logic.
+- `storage.py` - SQLite saving/loading, local profiles, groups, sharing, backup, and restore.
 - `utils.py` - helper functions for display and exports.
-- `test_planner.py` - simple tests for the planner logic.
+- `test_planner.py` - simple tests for planner logic.
 - `requirements.txt` - Python dependencies.
 - `README.md` - setup and usage instructions.
 
@@ -57,26 +63,32 @@ Open that URL in your browser.
 
 The planner keeps a canonical ordered list of Bible chapters.
 
-When you update progress:
+When progress is saved:
 
-1. The app saves how many chapters you read today.
-2. It marks completed chapters in Bible order.
-3. If you read fewer than assigned, the unread chapters remain unfinished.
-4. If you read more than assigned, the app marks the next unread chapters complete too.
-5. Starting tomorrow, the app rebuilds the future plan using all chapters that are still unread.
-6. Past history is not changed.
+1. The app records the selected progress date.
+2. It marks the selected assigned chapters as completed.
+3. If the user selects extra chapters, those chapters are also marked completed.
+4. If the user enters only a number, the app completes the next unread chapters in order.
+5. The app recalculates unread chapters.
+6. Future assignments are rebuilt from the next day onward.
+7. Past history is not changed.
 
-Example: if today's plan is Genesis 1-4 and you read 2 chapters, Genesis 1-2 are completed and Genesis 3 onward is redistributed. If you read 6 chapters, Genesis 1-6 are completed and the future daily load goes down.
+If a reader skips a day, the app saves that nothing was read and redistributes the unread chapters into the future plan.
 
-## Reset the App
+## Backup And Restore
 
-Open the `Settings` tab, check the reset confirmation box, and click `Reset plan`.
+Open the `Dashboard` or `Settings` page.
 
-This deletes the local SQLite data from:
+- Use `Export my user data` to download a JSON backup.
+- Use the restore uploader to reupload that JSON after an app update.
 
-```text
-bible_planner.db
-```
+The backup includes the current user's profile, settings, assignments, completed chapters, and reading history.
+
+## Reset The App
+
+Open the `Settings` page, check the reset confirmation box, and click `Reset plan`.
+
+This resets data for the signed-in local profile.
 
 ## Run Tests
 
@@ -90,16 +102,16 @@ The tests verify:
 
 - the Bible chapter total is 1,189;
 - generated plans assign every chapter exactly once;
-- duplicate chapter assignments are avoided;
+- mixed Old/New Testament plans cover all chapters;
 - completed chapters are not reassigned;
 - missed chapters are redistributed;
-- extra reading moves the plan forward.
+- future assignments update after progress.
 
-## Deploy to Streamlit Community Cloud
+## Deploy To Streamlit Community Cloud
 
-1. Put this project in a GitHub repository.
+1. Push this project to GitHub.
 2. Go to Streamlit Community Cloud.
-3. Create a new app from your repository.
+3. Create a new app from your GitHub repository.
 4. Set the main file path to `app.py`.
 5. Deploy.
 
@@ -109,7 +121,7 @@ The included `requirements.txt` tells Streamlit Cloud which packages to install.
 
 - WhatsApp reminders.
 - Email or push notifications.
-- Multiple reading plans.
-- Backup and restore.
-- AI-generated chapter reflection prompts using OpenAI or Gemini.
-- User accounts for syncing across devices.
+- Proper production authentication with Supabase, Firebase, Clerk, or Auth0.
+- Hosted database such as Supabase Postgres.
+- AI-generated chapter reflections using OpenAI, Gemini, or a local Ollama model.
+- Better mobile layouts and charts.
