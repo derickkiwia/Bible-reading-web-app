@@ -2,6 +2,8 @@
 
 from datetime import date, datetime, timedelta
 import json
+from urllib.parse import quote
+from urllib.request import urlopen
 import streamlit as st
 
 from bible_data import NEW_TESTAMENT_BOOKS, OLD_TESTAMENT_BOOKS, TOTAL_BIBLE_CHAPTERS, get_all_chapters, get_book_chapters, get_book_names, get_chapter_count
@@ -11,13 +13,28 @@ from storage import (
     export_profile_data, import_profile_data,
     init_db, invite_progress_viewer, load_allowed_viewers, load_assignments,
     load_completed_chapters, load_group_progress, load_groups_for_profile, load_history,
-    load_profile, load_settings, load_shared_profiles_for_viewer, reset_all_data,
-    save_assignments, save_history, save_settings,
+    load_profile, load_reading_position, load_reading_positions, load_settings,
+    load_shared_profiles_for_viewer, reset_all_data, save_assignments, save_history,
+    save_reading_position, save_settings,
 )
 from utils import assignments_to_dataframe, format_chapter_list, history_to_dataframe
 
 st.set_page_config(page_title="Bible Reading Planner", page_icon="📖", layout="centered")
 init_db()
+
+ONLINE_PUBLIC_DOMAIN_VERSIONS = {
+    "KJV": "kjv",
+    "ASV": "asv",
+    "WEB": "web",
+}
+LICENSED_OR_NOT_INSTALLED_VERSIONS = [
+    "NIV - English (requires license/API)",
+    "Amplified - English (requires license/API)",
+    "NKJV - English (requires license/API)",
+    "Swahili Union Version (requires licensed text/API)",
+    "Biblia Habari Njema - Swahili (requires licensed text/API)",
+    "Neno Bibilia Takatifu - Swahili (requires licensed text/API)",
+]
 
 
 def set_screen(screen_name):
@@ -38,7 +55,7 @@ def landing_page():
             profile = authenticate_profile(username, pin)
             if profile:
                 st.session_state["profile_id"] = profile["id"]
-                st.session_state["screen"] = "Update Progress" if load_settings(profile["id"]) else "Setup Plan"
+                st.session_state["screen"] = "Start" if load_settings(profile["id"]) else "Setup Plan"
                 st.rerun()
             st.error("That username or PIN did not match.")
 
@@ -320,6 +337,167 @@ def progress_screen(settings, assignments, completed, profile):
         st.rerun()
 
 
+def start_screen(settings, assignments, completed, history, profile):
+    st.subheader(f"Welcome back, {profile['name']}")
+    if not settings:
+        st.info("Let's create your reading plan first.")
+        st.button("Set up my plan", type="primary", on_click=set_screen, args=("Setup Plan",))
+        return
+
+    today_key = date.today().isoformat()
+    assigned = assignments.get(today_key, [])
+    plan_chapters = get_plan_chapters(settings)
+    plan_completed = len(set(completed).intersection(plan_chapters))
+    remaining = max(len(plan_chapters) - plan_completed, 0)
+    finish_days = projected_finish_days(history or [], remaining)
+
+    st.write("What would you like to do now?")
+    cols = st.columns(2)
+    with cols[0]:
+        st.markdown("### Read today's Bible")
+        if assigned:
+            st.write(f"{len(assigned)} chapter(s) assigned today.")
+            st.caption(", ".join(assigned[:3]) + ("..." if len(assigned) > 3 else ""))
+        else:
+            st.write("Open your reader and continue through your plan.")
+        if st.button("Read Bible", type="primary", use_container_width=True):
+            st.session_state["screen"] = "Bible Reader"
+            st.rerun()
+
+    with cols[1]:
+        st.markdown("### Update progress")
+        st.write("Record what you read and let the plan adjust.")
+        st.caption(f"{remaining} chapter(s) left in your current plan.")
+        if st.button("Update Progress", use_container_width=True):
+            st.session_state["screen"] = "Update Progress"
+            st.rerun()
+
+    st.divider()
+    metric_cols = st.columns(3)
+    metric_cols[0].metric("Current plan", f"{pct(plan_completed, len(plan_chapters)):.1f}%")
+    metric_cols[1].metric("Completed", plan_completed)
+    metric_cols[2].metric("Remaining", remaining)
+
+    if finish_days == 0:
+        st.success("You have completed this plan.")
+    elif finish_days is not None:
+        st.info(f"If you keep this pace, you will finish in about {finish_days} days.")
+
+
+def split_chapter_label(chapter_label):
+    book, chapter = chapter_label.rsplit(" ", 1)
+    return book, int(chapter)
+
+
+@st.cache_data(ttl=3600)
+def fetch_public_domain_chapter(chapter_label, version):
+    """Fetch one chapter from bible-api.com for supported public-domain versions."""
+    translation = ONLINE_PUBLIC_DOMAIN_VERSIONS[version]
+    url = f"https://bible-api.com/{quote(chapter_label)}?translation={translation}"
+    with urlopen(url, timeout=10) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    if "verses" not in data:
+        raise ValueError(data.get("error", "Bible text could not be loaded."))
+    return [
+        {"verse": int(item["verse"]), "text": item["text"].strip()}
+        for item in data["verses"]
+    ]
+
+
+def version_select(label, key):
+    options = list(ONLINE_PUBLIC_DOMAIN_VERSIONS) + LICENSED_OR_NOT_INSTALLED_VERSIONS
+    return st.selectbox(label, options, key=key)
+
+
+def render_chapter_reader(chapter_label, version, profile_id, key_prefix, compact=False):
+    if version not in ONLINE_PUBLIC_DOMAIN_VERSIONS:
+        st.warning(
+            "This translation is not bundled because it requires a license or paid/API provider. "
+            "For production, connect API.Bible, YouVersion for Churches if eligible, or another licensed Bible text provider."
+        )
+        return
+
+    position = load_reading_position(profile_id, chapter_label)
+    last_verse = int(position["verse"]) if position and position.get("version") == version else 0
+    try:
+        verses = fetch_public_domain_chapter(chapter_label, version)
+    except Exception as error:
+        st.error(f"Could not load {chapter_label} in {version}. Check internet access or try another version.")
+        st.caption(str(error))
+        return
+
+    if not compact and last_verse:
+        st.info(f"Last saved position: {chapter_label}:{last_verse} in {version}.")
+
+    max_verse = max([item["verse"] for item in verses], default=1)
+    selected_verse = st.slider(
+        "I ended at verse",
+        min_value=1,
+        max_value=max_verse,
+        value=min(max(last_verse or 1, 1), max_verse),
+        key=f"{key_prefix}_verse_slider",
+    )
+    if st.button("Save reading position", key=f"{key_prefix}_save_position"):
+        save_reading_position(profile_id, chapter_label, selected_verse, version, "Read on this site")
+        st.success(f"Saved your place at {chapter_label}:{selected_verse}.")
+
+    for item in verses:
+        verse_number = item["verse"]
+        marker = "✓ " if last_verse and verse_number <= last_verse else ""
+        st.markdown(f"**{marker}{verse_number}.** {item['text']}")
+
+
+def bible_reader(settings, assignments, profile):
+    st.subheader("Bible Reader")
+    st.caption("Choose whether to read inside the app or track your place while using your own Bible.")
+
+    if not settings:
+        st.warning("Create a reading plan first so the reader can follow your assignments.")
+        st.button("Set up my plan", on_click=set_screen, args=("Setup Plan",))
+        return
+
+    today_chapters = assignments.get(date.today().isoformat(), [])
+    plan_chapters = get_plan_chapters(settings)
+    default_chapters = today_chapters or plan_chapters
+    if not default_chapters:
+        st.info("No chapters are available in this plan yet.")
+        return
+
+    reading_mode = st.radio("How do you want to read?", ["Read on this site", "Use my physical Bible"])
+    chapter_label = st.selectbox("Chapter to read", default_chapters, index=0)
+
+    saved_positions = load_reading_positions(profile["id"])
+    if saved_positions:
+        latest = saved_positions[0]
+        st.caption(f"Most recent saved place: {latest['chapter']}:{latest['verse']} ({latest['version']})")
+
+    if reading_mode == "Use my physical Bible":
+        book, chapter_number = split_chapter_label(chapter_label)
+        st.write(f"Open your Bible to **{book} {chapter_number}**.")
+        verse = st.number_input("Verse where I stopped", min_value=1, max_value=200, value=1, step=1)
+        version = st.text_input("Bible version I used", value="Physical Bible")
+        if st.button("Save my physical Bible position", type="primary"):
+            save_reading_position(profile["id"], chapter_label, int(verse), version, "Physical Bible")
+            st.success(f"Saved your place at {chapter_label}:{int(verse)}.")
+        return
+
+    compare = st.checkbox("Split screen and compare two versions")
+    if compare:
+        left, right = st.columns(2)
+        with left:
+            left_version = version_select("Left version", "left_reader_version")
+            st.write(f"**{chapter_label} - {left_version}**")
+            render_chapter_reader(chapter_label, left_version, profile["id"], "left_reader", compact=True)
+        with right:
+            right_version = version_select("Right version", "right_reader_version")
+            st.write(f"**{chapter_label} - {right_version}**")
+            render_chapter_reader(chapter_label, right_version, profile["id"], "right_reader", compact=True)
+    else:
+        version = version_select("Bible version", "single_reader_version")
+        st.write(f"**{chapter_label} - {version}**")
+        render_chapter_reader(chapter_label, version, profile["id"], "single_reader")
+
+
 def dashboard(settings, assignments, completed, history=None, title="Dashboard"):
     st.subheader(title)
     if not settings:
@@ -496,17 +674,21 @@ def main():
     completed = load_completed_chapters(profile["id"])
     history = load_history(profile["id"])
     if "screen" not in st.session_state:
-        st.session_state["screen"] = "Update Progress" if settings else "Setup Plan"
+        st.session_state["screen"] = "Start" if settings else "Setup Plan"
     st.title("Bible Reading Planner")
     st.caption("A simple plan that adjusts as you read.")
     st.write(f"Signed in as **{profile['name']}** (`@{profile['username']}`)")
-    options = ["Setup Plan", "Today's Reading", "Update Progress", "Dashboard", "Groups", "Leaderboard", "AI Guidance", "Reading History", "Settings"]
+    options = ["Start", "Setup Plan", "Today's Reading", "Bible Reader", "Update Progress", "Dashboard", "Groups", "Leaderboard", "AI Guidance", "Reading History", "Settings"]
     selected = st.sidebar.radio("Navigation", options, index=options.index(st.session_state["screen"]) if st.session_state["screen"] in options else 0)
     st.session_state["screen"] = selected
-    if selected == "Setup Plan":
+    if selected == "Start":
+        start_screen(settings, assignments, completed, history, profile)
+    elif selected == "Setup Plan":
         setup_plan(settings, profile)
     elif selected == "Today's Reading":
         today_screen(settings, assignments, completed, profile["id"])
+    elif selected == "Bible Reader":
+        bible_reader(settings, assignments, profile)
     elif selected == "Update Progress":
         progress_screen(settings, assignments, completed, profile)
     elif selected == "Dashboard":

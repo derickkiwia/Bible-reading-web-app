@@ -46,6 +46,7 @@ def create_current_tables(con):
     con.execute("CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL)")
     con.execute("CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER NOT NULL, profile_id INTEGER NOT NULL, joined_at TEXT NOT NULL, PRIMARY KEY (group_id, profile_id))")
     con.execute("CREATE TABLE IF NOT EXISTS progress_access (owner_profile_id INTEGER NOT NULL, viewer_profile_id INTEGER NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (owner_profile_id, viewer_profile_id))")
+    con.execute("CREATE TABLE IF NOT EXISTS reading_positions (profile_id INTEGER NOT NULL, chapter TEXT NOT NULL, verse INTEGER NOT NULL, version TEXT NOT NULL, reading_mode TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (profile_id, chapter))")
 
 
 def migrate_legacy_single_user_database(con):
@@ -164,6 +165,41 @@ def load_history(profile_id):
     return [{"date": r["date"], "assigned_chapters": json.loads(r["assigned_chapters"]), "completed_chapters": json.loads(r["completed_chapters"]), "chapters_read": r["chapters_read"], "notes": r["notes"] or "", "updated_at": r["updated_at"]} for r in rows]
 
 
+def save_reading_position(profile_id, chapter, verse, version, reading_mode):
+    now = datetime.now().isoformat(timespec="seconds")
+    with get_connection() as con:
+        con.execute(
+            """
+            INSERT INTO reading_positions (profile_id, chapter, verse, version, reading_mode, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(profile_id, chapter) DO UPDATE
+            SET verse = excluded.verse,
+                version = excluded.version,
+                reading_mode = excluded.reading_mode,
+                updated_at = excluded.updated_at
+            """,
+            (profile_id, chapter, int(verse), version, reading_mode, now),
+        )
+
+
+def load_reading_position(profile_id, chapter):
+    with get_connection() as con:
+        row = con.execute(
+            "SELECT * FROM reading_positions WHERE profile_id = ? AND chapter = ?",
+            (profile_id, chapter),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def load_reading_positions(profile_id):
+    with get_connection() as con:
+        rows = con.execute(
+            "SELECT * FROM reading_positions WHERE profile_id = ? ORDER BY updated_at DESC",
+            (profile_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def export_profile_data(profile_id):
     """Export one user's full local data as a JSON-serializable dictionary."""
     with get_connection() as con:
@@ -172,6 +208,7 @@ def export_profile_data(profile_id):
         assignments = con.execute("SELECT date, chapters, updated_at FROM assignments WHERE profile_id = ? ORDER BY date", (profile_id,)).fetchall()
         completed = con.execute("SELECT chapter, completed_at FROM completed_chapters WHERE profile_id = ? ORDER BY completed_at", (profile_id,)).fetchall()
         history = con.execute("SELECT * FROM history WHERE profile_id = ? ORDER BY date", (profile_id,)).fetchall()
+        reading_positions = con.execute("SELECT * FROM reading_positions WHERE profile_id = ? ORDER BY updated_at DESC", (profile_id,)).fetchall()
     return {
         "version": 1,
         "exported_at": datetime.now().isoformat(timespec="seconds"),
@@ -193,6 +230,7 @@ def export_profile_data(profile_id):
             }
             for row in history
         ],
+        "reading_positions": [dict(row) for row in reading_positions],
     }
 
 
@@ -204,6 +242,7 @@ def import_profile_data(profile_id, backup):
         con.execute("DELETE FROM assignments WHERE profile_id = ?", (profile_id,))
         con.execute("DELETE FROM completed_chapters WHERE profile_id = ?", (profile_id,))
         con.execute("DELETE FROM history WHERE profile_id = ?", (profile_id,))
+        con.execute("DELETE FROM reading_positions WHERE profile_id = ?", (profile_id,))
 
         if backup.get("settings"):
             con.execute(
@@ -239,6 +278,24 @@ def import_profile_data(profile_id, backup):
                     json.dumps(row.get("completed_chapters", [])),
                     int(row.get("chapters_read", 0)),
                     row.get("notes", ""),
+                    row.get("updated_at", now),
+                ),
+            )
+
+        for row in backup.get("reading_positions", []):
+            con.execute(
+                """
+                INSERT OR REPLACE INTO reading_positions (
+                    profile_id, chapter, verse, version, reading_mode, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    profile_id,
+                    row["chapter"],
+                    int(row.get("verse", 1)),
+                    row.get("version", "KJV"),
+                    row.get("reading_mode", "Read on this site"),
                     row.get("updated_at", now),
                 ),
             )
