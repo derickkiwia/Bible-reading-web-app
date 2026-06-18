@@ -96,36 +96,46 @@ def setup_plan(settings, profile):
         st.info("You already have a plan. Existing users are sent straight to progress.")
         st.button("Go to progress", on_click=set_screen, args=("Update Progress",))
         return
-    with st.form("setup_form"):
-        default_end = date(date.today().year, 12, 31)
-        start_date = st.date_input("Start date", value=date.today())
-        end_date = st.date_input("End date", value=default_end)
-        read_every_day = st.checkbox("Read every day", value=True)
-        weekday_labels = list(WEEKDAY_NAMES.keys())
-        selected_labels = weekday_labels
-        if not read_every_day:
-            selected_labels = st.multiselect("Reading days", weekday_labels, default=weekday_labels[:5])
+    default_end = date(date.today().year, 12, 31)
+    start_date = st.date_input("Start date", value=date.today())
+    end_date = st.date_input("End date", value=default_end)
+    read_every_day = st.checkbox("Read every day", value=True)
+    weekday_labels = list(WEEKDAY_NAMES.keys())
+    selected_labels = weekday_labels
+    if not read_every_day:
+        selected_labels = st.multiselect("Reading days", weekday_labels, default=weekday_labels[:5])
+
+    plan_style = st.radio("Reading style", ["Canonical order", "Mixed Old and New Testament"])
+    start_book = "Genesis"
+    start_chapter = 1
+    old_percent = 70
+    old_start_book = "Genesis"
+    old_start_chapter = 1
+    new_start_book = "Matthew"
+    new_start_chapter = 1
+
+    if plan_style == "Canonical order":
         start_option = st.radio("Where do you want to begin?", ["Genesis 1", "Choose a book and chapter"])
-        start_book = "Genesis"
-        start_chapter = 1
         if start_option == "Choose a book and chapter":
+            st.info("Pick the exact place where your Bible reading plan should start.")
             start_book = st.selectbox("Starting book", get_book_names())
             start_chapter = st.number_input("Starting chapter", 1, get_chapter_count(start_book), 1)
-        plan_style = st.radio("Reading style", ["Canonical order", "Mixed Old and New Testament"])
-        old_percent = 70
-        old_start_book = "Genesis"
-        old_start_chapter = 1
-        new_start_book = "Matthew"
-        new_start_chapter = 1
-        if plan_style == "Mixed Old and New Testament":
-            old_percent = st.slider("Old Testament percentage", 10, 90, 70, 5)
-            st.write("Choose where the mixed plan should begin.")
-            old_start_book = st.selectbox("Old Testament starting book", OLD_TESTAMENT_BOOKS)
-            old_start_chapter = st.number_input("Old Testament starting chapter", 1, get_chapter_count(old_start_book), 1)
-            new_start_book = st.selectbox("New Testament starting book", NEW_TESTAMENT_BOOKS)
-            new_start_chapter = st.number_input("New Testament starting chapter", 1, get_chapter_count(new_start_book), 1)
-        submitted = st.form_submit_button("Generate plan", type="primary")
+    else:
+        old_percent = st.slider("Old Testament percentage", 10, 90, 70, 5)
+        st.info("Pick where each Testament should begin for your mixed reading plan.")
+        old_start_book = st.selectbox("Old Testament starting book", OLD_TESTAMENT_BOOKS)
+        old_start_chapter = st.number_input("Old Testament starting chapter", 1, get_chapter_count(old_start_book), 1)
+        new_start_book = st.selectbox("New Testament starting book", NEW_TESTAMENT_BOOKS)
+        new_start_chapter = st.number_input("New Testament starting chapter", 1, get_chapter_count(new_start_book), 1)
+
+    submitted = st.button("Generate plan", type="primary")
     if submitted:
+        if start_date > end_date:
+            st.error("Start date must be before or equal to end date.")
+            return
+        if not selected_labels:
+            st.error("Choose at least one reading day.")
+            return
         settings_to_save = {
             "start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
             "selected_weekdays": [WEEKDAY_NAMES[label] for label in selected_labels],
