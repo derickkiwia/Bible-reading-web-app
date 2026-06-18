@@ -7,7 +7,9 @@ from bible_data import (
     OLD_TESTAMENT_BOOKS,
     OLD_TESTAMENT_CHAPTERS,
     get_all_chapters,
+    get_all_chapters_wrapped,
     get_chapters_for_books,
+    get_chapters_for_books_wrapped,
 )
 
 WEEKDAY_NAMES = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
@@ -74,16 +76,30 @@ def distribute_mixed_chapters(chapters, reading_dates, old_testament_percent):
 
 
 def generate_initial_plan(settings):
+    plan_scope = settings.get("plan_scope", "Read from selected start to the end")
     if settings.get("plan_style") == "Mixed Old and New Testament":
-        chapters = get_chapters_for_books(
-            OLD_TESTAMENT_BOOKS,
-            settings.get("old_start_book", "Genesis"),
-            int(settings.get("old_start_chapter", 1)),
-        ) + get_chapters_for_books(
-            NEW_TESTAMENT_BOOKS,
-            settings.get("new_start_book", "Matthew"),
-            int(settings.get("new_start_chapter", 1)),
-        )
+        if plan_scope == "Read the whole Bible starting from my selected points":
+            chapters = get_chapters_for_books_wrapped(
+                OLD_TESTAMENT_BOOKS,
+                settings.get("old_start_book", "Genesis"),
+                int(settings.get("old_start_chapter", 1)),
+            ) + get_chapters_for_books_wrapped(
+                NEW_TESTAMENT_BOOKS,
+                settings.get("new_start_book", "Matthew"),
+                int(settings.get("new_start_chapter", 1)),
+            )
+        else:
+            chapters = get_chapters_for_books(
+                OLD_TESTAMENT_BOOKS,
+                settings.get("old_start_book", "Genesis"),
+                int(settings.get("old_start_chapter", 1)),
+            ) + get_chapters_for_books(
+                NEW_TESTAMENT_BOOKS,
+                settings.get("new_start_book", "Matthew"),
+                int(settings.get("new_start_chapter", 1)),
+            )
+    elif plan_scope == "Read the whole Bible starting from my selected point":
+        chapters = get_all_chapters_wrapped(settings["start_book"], settings["start_chapter"])
     else:
         chapters = get_all_chapters(settings["start_book"], settings["start_chapter"])
     dates = get_reading_dates(settings["start_date"], settings["end_date"], settings["selected_weekdays"])

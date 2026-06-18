@@ -54,6 +54,18 @@ def get_chapters_for_books(book_names, start_book=None, start_chapter=1):
     return chapters
 
 
+def rotate_chapters(chapters, start_chapter_label):
+    if start_chapter_label not in chapters:
+        raise ValueError(f"Unknown chapter: {start_chapter_label}")
+    start_index = chapters.index(start_chapter_label)
+    return chapters[start_index:] + chapters[:start_index]
+
+
+def get_chapters_for_books_wrapped(book_names, start_book, start_chapter=1):
+    chapters = get_chapters_for_books(book_names)
+    return rotate_chapters(chapters, f"{start_book} {start_chapter}")
+
+
 def get_all_chapters(start_book="Genesis", start_chapter=1):
     chapters = []
     found = False
@@ -65,6 +77,10 @@ def get_all_chapters(start_book="Genesis", start_chapter=1):
         first = start_chapter if book == start_book else 1
         chapters.extend(f"{book} {chapter}" for chapter in range(first, count + 1))
     return chapters
+
+
+def get_all_chapters_wrapped(start_book="Genesis", start_chapter=1):
+    return rotate_chapters(get_all_chapters(), f"{start_book} {start_chapter}")
 
 
 TOTAL_BIBLE_CHAPTERS = len(get_all_chapters())

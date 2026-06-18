@@ -79,6 +79,47 @@ def testament_counts(chapters, completed):
     return old_done, old_total, new_done, new_total
 
 
+def preview_plan(settings):
+    try:
+        assignments, chapters = generate_initial_plan(settings)
+    except ValueError as error:
+        st.warning(str(error))
+        return None, None
+
+    reading_days = [day for day, day_chapters in assignments.items() if day_chapters]
+    st.write("**Plan preview**")
+    cols = st.columns(3)
+    cols[0].metric("Chapters in this plan", len(chapters))
+    cols[1].metric("Reading days", len(reading_days))
+    cols[2].metric("Average per day", f"{(len(chapters) / len(reading_days)):.1f}" if reading_days else "0")
+
+    if settings.get("plan_style") == "Mixed Old and New Testament":
+        old_count = sum(1 for chapter in chapters if chapter.rsplit(" ", 1)[0] in OLD_TESTAMENT_BOOKS)
+        new_count = sum(1 for chapter in chapters if chapter.rsplit(" ", 1)[0] in NEW_TESTAMENT_BOOKS)
+        scope_text = (
+            "It will wrap around and include the earlier chapters too."
+            if settings.get("plan_scope") == "Read the whole Bible starting from my selected points"
+            else "It only includes chapters from those selected points onward."
+        )
+        st.caption(
+            f"This mixed plan starts Old Testament at {settings['old_start_book']} {settings['old_start_chapter']} "
+            f"and New Testament at {settings['new_start_book']} {settings['new_start_chapter']}. "
+            f"It includes {old_count} Old Testament chapters and {new_count} New Testament chapters. {scope_text}"
+        )
+    else:
+        if settings.get("plan_scope") == "Read the whole Bible starting from my selected point":
+            st.caption(
+                f"This plan starts at {settings['start_book']} {settings['start_chapter']}, continues to Revelation, "
+                "then wraps around to Genesis so the full Bible is included."
+            )
+        else:
+            st.caption(f"This plan starts at {settings['start_book']} {settings['start_chapter']} and continues to Revelation only.")
+
+    for day, day_chapters in list(assignments.items())[:5]:
+        st.write(f"**{day}:** {', '.join(day_chapters) if day_chapters else 'No reading assigned'}")
+    return assignments, chapters
+
+
 def projected_finish_days(history, remaining):
     active_days = [row for row in history if int(row.get("chapters_read", 0)) > 0]
     if remaining <= 0:
@@ -113,6 +154,7 @@ def setup_plan(settings, profile):
     old_start_chapter = 1
     new_start_book = "Matthew"
     new_start_chapter = 1
+    plan_scope = "Read from selected start to the end"
 
     if plan_style == "Canonical order":
         start_option = st.radio("Where do you want to begin?", ["Genesis 1", "Choose a book and chapter"])
@@ -120,6 +162,15 @@ def setup_plan(settings, profile):
             st.info("Pick the exact place where your Bible reading plan should start.")
             start_book = st.selectbox("Starting book", get_book_names())
             start_chapter = st.number_input("Starting chapter", 1, get_chapter_count(start_book), 1)
+            plan_scope = st.radio(
+                "What should happen to chapters before this starting point?",
+                [
+                    "Read the whole Bible starting from my selected point",
+                    "Read from selected start to the end",
+                ],
+            )
+        else:
+            plan_scope = "Read the whole Bible starting from my selected point"
     else:
         old_percent = st.slider("Old Testament percentage", 10, 90, 70, 5)
         st.info("Pick where each Testament should begin for your mixed reading plan.")
@@ -127,6 +178,27 @@ def setup_plan(settings, profile):
         old_start_chapter = st.number_input("Old Testament starting chapter", 1, get_chapter_count(old_start_book), 1)
         new_start_book = st.selectbox("New Testament starting book", NEW_TESTAMENT_BOOKS)
         new_start_chapter = st.number_input("New Testament starting chapter", 1, get_chapter_count(new_start_book), 1)
+        plan_scope = st.radio(
+            "What should happen to earlier chapters before those starting points?",
+            [
+                "Read the whole Bible starting from my selected points",
+                "Read from selected start to the end",
+            ],
+        )
+
+    preview_settings = {
+        "start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
+        "selected_weekdays": [WEEKDAY_NAMES[label] for label in selected_labels],
+        "start_book": start_book, "start_chapter": int(start_chapter),
+        "plan_style": plan_style, "old_testament_percent": int(old_percent),
+        "old_start_book": old_start_book, "old_start_chapter": int(old_start_chapter),
+        "new_start_book": new_start_book, "new_start_chapter": int(new_start_chapter),
+        "plan_scope": plan_scope,
+    }
+    preview_assignments = None
+    preview_chapters = None
+    if start_date <= end_date and selected_labels:
+        preview_assignments, preview_chapters = preview_plan(preview_settings)
 
     submitted = st.button("Generate plan", type="primary")
     if submitted:
@@ -143,9 +215,13 @@ def setup_plan(settings, profile):
             "plan_style": plan_style, "old_testament_percent": int(old_percent),
             "old_start_book": old_start_book, "old_start_chapter": int(old_start_chapter),
             "new_start_book": new_start_book, "new_start_chapter": int(new_start_chapter),
+            "plan_scope": plan_scope,
             "created_at": datetime.now().isoformat(timespec="seconds"),
         }
-        assignments, chapters = generate_initial_plan(settings_to_save)
+        if preview_assignments is not None and preview_chapters is not None:
+            assignments, chapters = preview_assignments, preview_chapters
+        else:
+            assignments, chapters = generate_initial_plan(settings_to_save)
         settings_to_save["original_assignments"] = assignments
         settings_to_save["plan_chapters"] = chapters
         reset_all_data(profile["id"])
@@ -158,7 +234,8 @@ def setup_plan(settings, profile):
 def status_for(settings, assignments, completed):
     today_key = date.today().isoformat()
     expected = sum(len(ch) for day, ch in settings.get("original_assignments", assignments).items() if day < today_key)
-    return progress_status(expected, len(completed))
+    plan_completed = len(set(completed).intersection(get_plan_chapters(settings)))
+    return progress_status(expected, plan_completed)
 
 
 def today_screen(settings, assignments, completed, profile_id):
@@ -175,8 +252,9 @@ def today_screen(settings, assignments, completed, profile_id):
     else:
         st.info(encouragement_message(status))
     chapters = get_plan_chapters(settings)
-    st.metric("Complete", f"{len(completed) / len(chapters) * 100:.1f}%")
-    st.metric("Completed chapters", len(completed))
+    plan_completed = len(set(completed).intersection(chapters))
+    st.metric("Current plan complete", f"{plan_completed / len(chapters) * 100:.1f}%")
+    st.metric("Plan chapters completed", plan_completed)
     st.write("**Assigned chapters**")
     st.markdown(format_chapter_list(assigned))
     st.caption(generate_ai_reflection_prompt(assigned, status))
@@ -248,23 +326,28 @@ def dashboard(settings, assignments, completed, history=None, title="Dashboard")
         st.warning("No plan has been created yet.")
         return
     plan_chapters = get_plan_chapters(settings)
+    all_chapters = get_all_chapters()
+    completed_set = set(completed)
+    whole_completed = len(completed_set.intersection(all_chapters))
+    whole_percent = pct(whole_completed, TOTAL_BIBLE_CHAPTERS)
+    plan_completed = len(completed_set.intersection(plan_chapters))
     total = len(plan_chapters)
-    percent = len(completed) / total * 100 if total else 0
-    remaining = max(total - len(completed), 0)
-    old_done, old_total, new_done, new_total = testament_counts(plan_chapters, completed)
+    plan_percent = pct(plan_completed, total)
+    remaining = max(total - plan_completed, 0)
+    old_done, old_total, new_done, new_total = testament_counts(all_chapters, completed)
     finish_days = projected_finish_days(history or [], remaining)
 
-    st.progress(min(percent / 100, 1.0))
+    st.progress(min(plan_percent / 100, 1.0))
     cols = st.columns(2)
-    cols[0].metric("Whole Bible", f"{percent:.1f}%")
-    cols[1].metric("Remaining", remaining)
+    cols[0].metric("Current plan", f"{plan_percent:.1f}%", f"{plan_completed}/{total}")
+    cols[1].metric("Whole Bible", f"{whole_percent:.1f}%", f"{whole_completed}/{TOTAL_BIBLE_CHAPTERS}")
 
     cols = st.columns(2)
     cols[0].metric("Old Testament", f"{pct(old_done, old_total):.1f}%", f"{old_done}/{old_total}")
     cols[1].metric("New Testament", f"{pct(new_done, new_total):.1f}%", f"{new_done}/{new_total}")
 
     cols = st.columns(2)
-    cols[0].metric("Completed", len(completed))
+    cols[0].metric("Plan remaining", remaining)
     cols[1].metric("Status", status_for(settings, assignments, completed).title())
 
     if finish_days == 0:

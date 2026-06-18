@@ -59,6 +59,48 @@ def test_mixed_plan_covers_old_and_new_testaments_once():
     assert len(set(assigned)) == 1189
 
 
+def test_whole_bible_can_start_mid_bible_and_wrap():
+    settings = {
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "selected_weekdays": [0, 1, 2, 3, 4, 5, 6],
+        "start_book": "John",
+        "start_chapter": 3,
+        "plan_scope": "Read the whole Bible starting from my selected point",
+    }
+    assignments, plan_chapters = generate_initial_plan(settings)
+    assigned = flatten(assignments)
+
+    assert len(plan_chapters) == 1189
+    assert len(set(plan_chapters)) == 1189
+    assert plan_chapters[0] == "John 3"
+    assert plan_chapters[-1] == "John 2"
+    assert assigned == plan_chapters
+
+
+def test_mixed_whole_bible_can_start_mid_testaments_and_wrap():
+    settings = {
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "selected_weekdays": [0, 1, 2, 3, 4, 5, 6],
+        "plan_style": "Mixed Old and New Testament",
+        "old_testament_percent": 70,
+        "old_start_book": "Psalms",
+        "old_start_chapter": 23,
+        "new_start_book": "John",
+        "new_start_chapter": 3,
+        "plan_scope": "Read the whole Bible starting from my selected points",
+    }
+    assignments, plan_chapters = generate_initial_plan(settings)
+
+    assert len(plan_chapters) == 1189
+    assert len(set(plan_chapters)) == 1189
+    assert plan_chapters[0] == "Psalms 23"
+    assert "Genesis 1" in plan_chapters
+    assert "Matthew 1" in plan_chapters
+    assert len(flatten(assignments)) == 1189
+
+
 def test_completed_chapters_are_not_reassigned():
     settings = {
         "start_date": "2026-01-01",
@@ -115,6 +157,8 @@ if __name__ == "__main__":
     test_total_chapters()
     test_plan_covers_all_chapters_once()
     test_mixed_plan_covers_old_and_new_testaments_once()
+    test_whole_bible_can_start_mid_bible_and_wrap()
+    test_mixed_whole_bible_can_start_mid_testaments_and_wrap()
     test_completed_chapters_are_not_reassigned()
     test_missed_chapters_are_redistributed()
     test_future_assignments_update_after_progress()
