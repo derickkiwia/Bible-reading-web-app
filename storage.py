@@ -23,16 +23,61 @@ def normalize_username(username):
     return username.strip().lower()
 
 
+def table_exists(con, table_name):
+    row = con.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def table_columns(con, table_name):
+    if not table_exists(con, table_name):
+        return []
+    return [row["name"] for row in con.execute(f"PRAGMA table_info({table_name})").fetchall()]
+
+
+def create_current_tables(con):
+    con.execute("CREATE TABLE IF NOT EXISTS profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, username TEXT UNIQUE, pin_hash TEXT, created_at TEXT NOT NULL)")
+    con.execute("CREATE TABLE IF NOT EXISTS settings (profile_id INTEGER PRIMARY KEY, data TEXT NOT NULL)")
+    con.execute("CREATE TABLE IF NOT EXISTS assignments (profile_id INTEGER NOT NULL, date TEXT NOT NULL, chapters TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (profile_id, date))")
+    con.execute("CREATE TABLE IF NOT EXISTS completed_chapters (profile_id INTEGER NOT NULL, chapter TEXT NOT NULL, completed_at TEXT NOT NULL, PRIMARY KEY (profile_id, chapter))")
+    con.execute("CREATE TABLE IF NOT EXISTS history (profile_id INTEGER NOT NULL, date TEXT NOT NULL, assigned_chapters TEXT NOT NULL, completed_chapters TEXT NOT NULL, chapters_read INTEGER NOT NULL, notes TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (profile_id, date))")
+    con.execute("CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL)")
+    con.execute("CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER NOT NULL, profile_id INTEGER NOT NULL, joined_at TEXT NOT NULL, PRIMARY KEY (group_id, profile_id))")
+    con.execute("CREATE TABLE IF NOT EXISTS progress_access (owner_profile_id INTEGER NOT NULL, viewer_profile_id INTEGER NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (owner_profile_id, viewer_profile_id))")
+
+
+def migrate_legacy_single_user_database(con):
+    """Move the original single-user SQLite tables into the newer profile schema."""
+    now = datetime.now().isoformat(timespec="seconds")
+    legacy_tables = ["settings", "assignments", "completed_chapters", "history"]
+
+    for table in legacy_tables:
+        if table_exists(con, table) and not table_exists(con, f"legacy_{table}"):
+            con.execute(f"ALTER TABLE {table} RENAME TO legacy_{table}")
+
+    create_current_tables(con)
+    con.execute(
+        "INSERT OR IGNORE INTO profiles (id, name, username, pin_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+        (1, "Imported Reader", "imported", "", now),
+    )
+
+    if table_exists(con, "legacy_settings"):
+        con.execute("INSERT OR IGNORE INTO settings (profile_id, data) SELECT 1, data FROM legacy_settings LIMIT 1")
+    if table_exists(con, "legacy_assignments"):
+        con.execute("INSERT OR IGNORE INTO assignments (profile_id, date, chapters, updated_at) SELECT 1, date, chapters, updated_at FROM legacy_assignments")
+    if table_exists(con, "legacy_completed_chapters"):
+        con.execute("INSERT OR IGNORE INTO completed_chapters (profile_id, chapter, completed_at) SELECT 1, chapter, completed_at FROM legacy_completed_chapters")
+    if table_exists(con, "legacy_history"):
+        con.execute("INSERT OR IGNORE INTO history (profile_id, date, assigned_chapters, completed_chapters, chapters_read, notes, updated_at) SELECT 1, date, assigned_chapters, completed_chapters, chapters_read, notes, updated_at FROM legacy_history")
+
+
 def init_db():
     with get_connection() as con:
-        con.execute("CREATE TABLE IF NOT EXISTS profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, username TEXT UNIQUE, pin_hash TEXT, created_at TEXT NOT NULL)")
-        con.execute("CREATE TABLE IF NOT EXISTS settings (profile_id INTEGER PRIMARY KEY, data TEXT NOT NULL)")
-        con.execute("CREATE TABLE IF NOT EXISTS assignments (profile_id INTEGER NOT NULL, date TEXT NOT NULL, chapters TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (profile_id, date))")
-        con.execute("CREATE TABLE IF NOT EXISTS completed_chapters (profile_id INTEGER NOT NULL, chapter TEXT NOT NULL, completed_at TEXT NOT NULL, PRIMARY KEY (profile_id, chapter))")
-        con.execute("CREATE TABLE IF NOT EXISTS history (profile_id INTEGER NOT NULL, date TEXT NOT NULL, assigned_chapters TEXT NOT NULL, completed_chapters TEXT NOT NULL, chapters_read INTEGER NOT NULL, notes TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (profile_id, date))")
-        con.execute("CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL)")
-        con.execute("CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER NOT NULL, profile_id INTEGER NOT NULL, joined_at TEXT NOT NULL, PRIMARY KEY (group_id, profile_id))")
-        con.execute("CREATE TABLE IF NOT EXISTS progress_access (owner_profile_id INTEGER NOT NULL, viewer_profile_id INTEGER NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (owner_profile_id, viewer_profile_id))")
+        if table_exists(con, "settings") and "profile_id" not in table_columns(con, "settings"):
+            migrate_legacy_single_user_database(con)
+        create_current_tables(con)
 
 
 def create_profile(name, username=None, pin=None):
